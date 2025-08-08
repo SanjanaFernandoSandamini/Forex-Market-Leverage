@@ -1,0 +1,103 @@
+name: Forex Pipeline ECS Deployment
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch: # manual trigger allowed
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPO: forex-pipeline
+  IMAGE_TAG: ${{ github.sha }} # commit SHA for traceability
+  CLUSTER_NAME: forex-cluster
+  SERVICE_NAME: forex-service
+  CONTAINER_NAME: forex-app
+  APP_PORT: 8000
+  MAX_RETRIES: 5
+  RETRY_DELAY: 10
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Log in to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v2
+
+    - name: Build and push Docker image
+      run: |
+        ECR_URI=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPO }}
+        docker build -t $ECR_URI:${{ env.IMAGE_TAG }} -t $ECR_URI:latest .
+        docker push $ECR_URI:${{ env.IMAGE_TAG }}
+        docker push $ECR_URI:latest
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Deploy new task definition to ECS
+      run: |
+        ECR_URI=$(aws ecr describe-repositories --repository-names ${{ env.ECR_REPO }} --query 'repositories[0].repositoryUri' --output text)
+        TASK_DEF=$(aws ecs describe-task-definition --task-definition ${{ env.SERVICE_NAME }} --query taskDefinition --output json)
+        NEW_TASK_DEF=$(echo "$TASK_DEF" | \
+          jq --arg IMAGE "$ECR_URI:${{ env.IMAGE_TAG }}" \
+             --arg KEY "${{ secrets.FASTFOREX_API_KEY }}" \
+          '.containerDefinitions[0].image = $IMAGE |
+           .containerDefinitions[0].environment |=
+             map(if .name == "FASTFOREX_API_KEY" then .value = $KEY else . end) |
+           del(.taskDefinitionArn) |
+           del(.revision) |
+           del(.status) |
+           del(.requiresAttributes) |
+           del(.compatibilities) |
+           del(.registeredAt) |
+           del(.registeredBy)')
+        echo "$NEW_TASK_DEF" > new-task-def.json
+        aws ecs register-task-definition --cli-input-json file://new-task-def.json
+        aws ecs update-service \
+          --cluster ${{ env.CLUSTER_NAME }} \
+          --service ${{ env.SERVICE_NAME }} \
+          --force-new-deployment
+
+    - name: Verify deployment
+      run: |
+        PUBLIC_URL=$(aws ecs describe-services \
+          --cluster ${{ env.CLUSTER_NAME }} \
+          --services ${{ env.SERVICE_NAME }} \
+          --query 'services[0].loadBalancers[0].loadBalancerName' \
+          --output text)
+        echo "Waiting for service to stabilize..."
+        aws ecs wait services-stable \
+          --cluster ${{ env.CLUSTER_NAME }} \
+          --services ${{ env.SERVICE_NAME }}
+        for i in $(seq 1 ${{ env.MAX_RETRIES }}); do
+          if curl -sSf http://$PUBLIC_URL:${{ env.APP_PORT }}/health; then
+            echo "✅ Deployment successful!"
+            exit 0
+          fi
+          sleep ${{ env.RETRY_DELAY }}
+        done
+        echo "❌ Deployment failed after ${{ env.MAX_RETRIES }} attempts"
+        exit 1
