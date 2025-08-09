@@ -1,10 +1,14 @@
-name: Train Model
+name: Train Model and Push to ECR
 
 on:
   push:
     branches:
       - main
   workflow_dispatch:
+
+env:
+  ECR_REPOSITORY: forex-app
+  AWS_REGION: eu-north-1  # change to your region
 
 jobs:
   train:
@@ -26,9 +30,20 @@ jobs:
           FASTFOREX_API_KEY: ${{ secrets.FASTFOREX_API_KEY }}
         run: python train.py
 
-      - name: Upload model artifact
-        uses: actions/upload-artifact@v4
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          name: forex-model
-          path: model/
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
 
+      - name: Log in to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, tag, and push image to Amazon ECR
+        run: |
+          IMAGE_TAG=latest
+          docker build -t $ECR_REPOSITORY:$IMAGE_TAG .
+          docker tag $ECR_REPOSITORY:$IMAGE_TAG ${{ steps.login-ecr.outputs.registry }}/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push ${{ steps.login-ecr.outputs.registry }}/$ECR_REPOSITORY:$IMAGE_TAG
