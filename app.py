@@ -1,22 +1,11 @@
-import os
-import joblib
 import numpy as np
+import joblib
 from flask import Flask, request, jsonify
+import os
 
 MODEL_DIR = "model"
 
-# Load models & scalers
-models = {
-    "logistic": joblib.load(os.path.join(MODEL_DIR, "logistic_model.joblib")),
-    "rf": joblib.load(os.path.join(MODEL_DIR, "rf_model.joblib")),
-    "xgb": joblib.load(os.path.join(MODEL_DIR, "xgb_model.joblib"))
-}
-
-scalers = {
-    "logistic": joblib.load(os.path.join(MODEL_DIR, "logistic_scaler.joblib")),
-    "rf": joblib.load(os.path.join(MODEL_DIR, "rf_scaler.joblib")),
-    "xgb": joblib.load(os.path.join(MODEL_DIR, "xgb_scaler.joblib"))
-}
+app = Flask(__name__)
 
 def classify_risk(volatility):
     if volatility > 0.015:
@@ -36,38 +25,35 @@ def recommend_leverage(confidence, risk):
     else:
         return 5
 
-app = Flask(__name__)
-
 @app.route("/predict", methods=["POST"])
 def predict():
     data = request.json
     required_features = ["returns", "ma_10", "volatility", "rsi_14"]
+    if not all(k in data for k in required_features):
+        return jsonify({"error": "Missing required features"}), 400
 
-    if not all(f in data for f in required_features):
-        return jsonify({"error": "Missing features"}), 400
-
-    features = np.array([data[f] for f in required_features]).reshape(1, -1)
-    
-    # Use XGBoost as main model here
-    scaler = scalers["xgb"]
-    model = models["xgb"]
-
-    X_scaled = scaler.transform(features)
-    proba = model.predict_proba(X_scaled)[0][1]
-    pred = int(proba > 0.5)
+    X_input = np.array([[data[f] for f in required_features]])
+    try:
+        model = joblib.load(f"{MODEL_DIR}/xgboost_model.joblib")
+        scaler = joblib.load(f"{MODEL_DIR}/xgboost_scaler.joblib")
+        X_scaled = scaler.transform(X_input)
+        prob = model.predict_proba(X_scaled)[0][1]
+        pred = int(prob > 0.5)
+    except Exception as e:
+        return jsonify({"error": f"Prediction failed: {str(e)}"}), 500
 
     risk = classify_risk(data["volatility"])
-    leverage = recommend_leverage(proba, risk)
+    leverage = recommend_leverage(prob, risk)
 
     return jsonify({
         "direction": "Up" if pred else "Down",
-        "confidence": round(proba, 4),
+        "confidence": round(prob, 4),
         "risk_level": risk,
         "recommended_leverage": leverage
     })
 
 @app.route("/health", methods=["GET"])
-def health():
+def health_check():
     return jsonify({"status": "running"}), 200
 
 if __name__ == "__main__":
