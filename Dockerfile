@@ -10,4 +10,7 @@ COPY model/ ./model/
 
 EXPOSE 5000
 
-CMD ["python", "app.py"]
+ENV FASTFOREX_API_KEY=your_api_key_here
+
+CMD ["gunicorn", "-w", "4", "-b", "0.0.0.0:5000", "app:app"]
+
