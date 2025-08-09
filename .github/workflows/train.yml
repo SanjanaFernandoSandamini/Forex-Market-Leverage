@@ -5,7 +5,7 @@ on:
     paths:
       - 'train.py'
       - 'requirements.txt'
-  workflow_dispatch:    # <-- Add this to allow manual runs
+  workflow_dispatch:
 
 jobs:
   train:
@@ -27,7 +27,7 @@ jobs:
         run: python train.py
 
       - name: Upload model artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: forex-models
           path: model/
