@@ -1,9 +1,9 @@
 flask
-requests
 pandas
 numpy
+requests
+torch
 scikit-learn
 xgboost
-torch
 joblib
-gunicorn
+
