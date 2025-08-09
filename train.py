@@ -1,3 +1,4 @@
+# train.py
 import pandas as pd
 import numpy as np
 import requests
@@ -28,7 +29,7 @@ def fetch_forex_data(symbol="EURUSD"):
     base_currency = symbol[:3]
     target_currency = symbol[3:]
     end_date = datetime.now().date() - timedelta(days=1)
-    start_date = end_date - timedelta(days=13)
+    start_date = end_date - timedelta(days=180)  # extended from 13 to 180 days
 
     all_data = []
     current_date = start_date
@@ -79,9 +80,9 @@ def evaluate_model(model, scaler, X_test, y_test):
     X_scaled = scaler.transform(X_test)
     y_pred = model.predict(X_scaled)
     acc = accuracy_score(y_test, y_pred)
-    prec = precision_score(y_test, y_pred)
-    rec = recall_score(y_test, y_pred)
-    f1 = f1_score(y_test, y_pred)
+    prec = precision_score(y_test, y_pred, zero_division=0)
+    rec = recall_score(y_test, y_pred, zero_division=0)
+    f1 = f1_score(y_test, y_pred, zero_division=0)
     return acc, prec, rec, f1
 
 # TRAINING FUNCTION
@@ -90,7 +91,10 @@ def train_models(df):
     X = df[features]
     y = df["direction"]
 
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    # Stratify to ensure both classes in train/test
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=42, stratify=y
+    )
 
     models = {
         "logistic_regression": LogisticRegression(max_iter=1000),
@@ -114,7 +118,7 @@ def train_models(df):
         acc, prec, rec, f1 = evaluate_model(model, scaler, X_test, y_test)
         print(f"{name} - Acc: {acc:.4f}, Precision: {prec:.4f}, Recall: {rec:.4f}, F1: {f1:.4f}")
 
-    # LSTM model training
+    # LSTM model training (unchanged)
     mm = MinMaxScaler()
     X_norm = mm.fit_transform(X)
     seq_len = 10
