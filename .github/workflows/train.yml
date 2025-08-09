@@ -5,6 +5,7 @@ on:
     paths:
       - 'train.py'
       - 'requirements.txt'
+  workflow_dispatch:    # <-- Add this to allow manual runs
 
 jobs:
   train:
